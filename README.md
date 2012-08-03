@@ -61,6 +61,7 @@ SmartPrint will not works in very complex situations:
 
  - nested function
  - nested ", tee_stdout=True)
+ - Python2.x only, never tested on Python 3.x(And SmartPrint will definitely not working in Python3.x)
 
 Example
 -------
