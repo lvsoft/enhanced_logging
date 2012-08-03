@@ -12,7 +12,8 @@ Usage
 String interpolation
 --------------------
 
-```def test_interpolation():
+```
+def test_interpolation():
     var1 = 123
     var2 = 'abc'
     var_complex = {'a':1, 2:'c', 3:[1,'a','b','c']}
@@ -27,7 +28,8 @@ String interpolation
 Redirect from print expression
 ------------------------------
 
-```@log.SmartPrint
+```
+@log.SmartPrint
 def test_print():
     abc = 1234
     print "hello",
@@ -42,7 +44,8 @@ The log level will be guessed according to first printed word.
 String interpolation also works, and you can override default log
 level temporarily:
 
-```@log.SmartPrint(default_level=WARNING)
+```
+@log.SmartPrint(default_level=WARNING)
 def test_print2():
     a='local value test'
     d= {1:2,3:None, '5':[7]}
@@ -62,14 +65,16 @@ SmartPrint will not works in very complex situations:
 Example
 -------
 
-```@decoration1
+```
+@decoration1
 @log.SmartPrint
 @decoration2
 def func(bla bla bla) ...
 ```
 ----------
 
-```@log.SmartPrint
+```
+@log.SmartPrint
 def func(bla bla bla) ...
     print "This will work"
     def func_nested(bla bla bla)...
