@@ -8,6 +8,19 @@ matcher1 = re.compile(r'\[\[\s*(\w+)\??\s*\]\]')
 matcher2 = re.compile(r'{{\s*(\w+)\??\s*}}')
 
 def replacer(f):
+    """
+    >>> import re, sys
+    >>> def test_func():
+    ...     a=1
+    ...     b='abc'
+    ...     f=sys._getframe()
+    ...     v1 = re.sub(matcher1, replacer(f), "[[a]], [[a?]], {{b}}, {{b?}}, [[c]], {{d}}")
+    ...     v2 = re.sub(matcher2, replacer(f), v1)
+    ...     return v2
+    ...
+    >>> test_func()
+    "1, a:1, 'abc', b:'abc', [[c]], {{d}}"
+    """
     def wrap(x):
         varname = x.group()
         vartype = varname[0]
@@ -22,7 +35,7 @@ def replacer(f):
         if varname in f.f_locals:        vobj = f.f_locals[varname]
         elif varname in f.f_globals:     vobj = f.f_globals[varname]
         else: 
-            return varname
+            return x.group()
 
         if vartype=='[':    strvar = str(vobj)
         elif vartype=='{':  strvar = repr(vobj)
@@ -32,10 +45,23 @@ def replacer(f):
     return wrap
 
 def generate_arg_str(arg_offset):
-   if arg_offset > 65536: 
-       raise NotImplementedError("FIXME in future")
-   else:
-       return chr(arg_offset & 0xFF) + chr(arg_offset >> 16)
+    r"""
+    Generate arg opcode according to arg_offset:
+
+      >>> generate_arg_str(22)
+      '\x16\x00'
+
+    Not supported yet: arg_offset larger than 65536
+      >>> generate_arg_str(100000)
+      Traceback (most recent call last):
+      ...
+      NotImplementedError: FIXME in future
+    
+    """
+    if arg_offset > 65536: 
+        raise NotImplementedError("FIXME in future")
+    else:
+        return chr(arg_offset & 0xFF) + chr(arg_offset >> 16)
 
 class MyLogger(logging.getLoggerClass()):
     def __init__(self, *args, **kwargs):
@@ -43,6 +69,17 @@ class MyLogger(logging.getLoggerClass()):
         super(MyLogger, self).__init__(*args, **kwargs)
 
     def _log(self, level, msg, args, exc_info=None, extra=None, frame=None, tee_stdout=None):
+        """
+        >>> log = getLogger('a')
+        >>> import sys
+        >>> log.addHandler(StreamHandler(stream = sys.stdout))
+        >>> a, b = 1, 'b'
+        >>> log.warning("[[a]], [[b]], [[a?]], [[b?]]")
+        1, b, a:1, b:b
+
+        >>> log.warning("{{a}}, {{b}}, {{a?}}, {{b?}}")
+        1, 'b', a:1, b:'b'
+        """
         if frame is None:
             frame = sys._getframe().f_back.f_back
 
@@ -54,7 +91,40 @@ class MyLogger(logging.getLoggerClass()):
         return super(MyLogger, self)._log(level, msg, args, exc_info, extra)
 
     def SmartPrint(self, *args, **kwargs):
-        def wrap(f, frame, default_level=None):
+        """
+        Override print to logging, string interpolation supported:
+
+          >>> log = getLogger('b')
+          >>> import sys
+          >>> console = StreamHandler(stream = sys.stdout)
+          >>> console.setFormatter(Formatter('%(levelname)s %(message)s'))
+          >>> log.addHandler(console)
+          >>> @log.SmartPrint
+          ... def test_print():
+          ...     a, b = 1, 'b'
+          ...     print "[[a]], [[b]], [[a?]], [[b?]]"
+          ...     print "{{a}}, {{b}}, {{a?}}, {{b?}}"
+          ...
+          >>> test_print()
+          NOTSET 1, b, a:1, b:b
+          NOTSET 1, 'b', a:1, b:'b'
+
+        And you can override default log level temporarily:
+
+          >>> @log.SmartPrint(default_level=WARNING)
+          ... def test_print():
+          ...     a, b = 1, 'b'
+          ...     print "[[a]], [[b]], [[a?]], [[b?]]"
+          ...     print "{{a}}, {{b}}, {{a?}}, {{b?}}"
+          ...     print "error override"
+          ...
+          >>> test_print()
+          WARNING 1, b, a:1, b:b
+          WARNING 1, 'b', a:1, b:'b'
+          ERROR error override
+
+        """
+        def wrap(f, default_level=None):
             code = f.func_code.co_code
             codeobj = f.func_code
 
@@ -123,7 +193,7 @@ class MyLogger(logging.getLoggerClass()):
 
             ncode += code[last_pos:]
             nconst.append(self._smart_print_helper)
-            nconst.append((default_level, frame))
+            nconst.append((default_level, f))
             nconst = tuple(nconst)
             
 
@@ -138,20 +208,27 @@ class MyLogger(logging.getLoggerClass()):
 
             return nfunc
 
-        frame = sys._getframe().f_back.f_back
-
         if len(args)==1:
-            
-            return wrap(args[0], frame)
+            return wrap(args[0])
         else:
             def wrap2(f):
-                return wrap(f, frame, kwargs.get('default_level'))
+                return wrap(f, kwargs.get('default_level'))
             return wrap2
 
-    def _smart_print_helper(self, level_and_frame, msg=None):
+    def _smart_print_helper(self, level_and_func, msg=None):
         """
         Msg redirected here from print expression
         """
+        func = level_and_func[1]
+        
+        frame = sys._getframe()
+        while True:
+#            print 'frame:',frame.f_code, func.func_code
+            assert frame, "frame not found? bug!!!"
+            if frame.f_code.co_filename == func.func_code.co_filename and frame.f_code.co_firstlineno == func.func_code.co_firstlineno:
+                break
+            frame = frame.f_back
+
         if msg is None:
             msg_val = " ".join(self._print_cache)
             self._print_cache=[]
@@ -163,13 +240,12 @@ class MyLogger(logging.getLoggerClass()):
                         level = logging._levelNames[name]
                         break
             else:
-                level = level_and_frame[0]
+                level = level_and_func[0]
 
             # ensure level set
             if level is None:   # use default level
                 level = self.level
-            
-            frame = level_and_frame[1]
+
             self._log(level, msg_val, {}, frame=frame)
         else:
             self._print_cache.append(msg)

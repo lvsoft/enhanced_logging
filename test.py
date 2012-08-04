@@ -36,6 +36,6 @@ def test_print2():
     print "error2, this is error"
 
 
-test_interpolation()
+#test_interpolation()
 test_print()
 test_print2()
