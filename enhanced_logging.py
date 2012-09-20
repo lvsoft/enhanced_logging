@@ -1,6 +1,6 @@
 import logging
 import re
-import sys
+import sys, inspect
 import opcode, types
 from opcode import opmap
 
@@ -26,15 +26,16 @@ def replacer(f):
         vartype = varname[0]
         varname = varname[2:-2].strip()
 
-        if varname.endswith('?'): 
+        if varname.endswith('?'):
             varname = varname[:-1]
             dump_varname = True
         else:
             dump_varname = False
-        
+
+
         if varname in f.f_locals:        vobj = f.f_locals[varname]
         elif varname in f.f_globals:     vobj = f.f_globals[varname]
-        else: 
+        else:
             return x.group()
 
         if vartype=='[':    strvar = str(vobj)
@@ -56,9 +57,9 @@ def generate_arg_str(arg_offset):
       Traceback (most recent call last):
       ...
       NotImplementedError: FIXME in future
-    
+
     """
-    if arg_offset > 65536: 
+    if arg_offset > 65536:
         raise NotImplementedError("FIXME in future")
     else:
         return chr(arg_offset & 0xFF) + chr(arg_offset >> 16)
@@ -74,6 +75,7 @@ class MyLogger(logging.getLoggerClass()):
         >>> import sys
         >>> log.addHandler(StreamHandler(stream = sys.stdout))
         >>> a, b = 1, 'b'
+        >>> c = [1,{4:['abc:def',6]}]
         >>> log.warning("[[a]], [[b]], [[a?]], [[b?]]")
         1, b, a:1, b:b
 
@@ -81,7 +83,14 @@ class MyLogger(logging.getLoggerClass()):
         1, 'b', a:1, b:'b'
         """
         if frame is None:
-            frame = sys._getframe().f_back.f_back
+            frame = inspect.currentframe().f_back.f_back
+            if frame.f_code.co_filename.endswith('enhanced_logging.py'):
+                frame = frame.f_back
+#            print "=========="
+#            print "level:", level, 'msg:', msg
+#            print '\n'.join(str(x) for x in inspect.getouterframes(frame))
+#            print "    ---    "
+
 
         msg = matcher1.sub(replacer(frame), msg)
         msg = matcher2.sub(replacer(frame), msg)
@@ -154,7 +163,7 @@ class MyLogger(logging.getLoggerClass()):
 
                 if op in [opmap['PRINT_ITEM'], opmap['PRINT_NEWLINE']]:
                     ncode += code[last_pos:now_pos]
-                    last_pos = i                    
+                    last_pos = i
                     ncode_len1 = len(ncode)
                     delta_adjust = 0
 
@@ -172,20 +181,20 @@ class MyLogger(logging.getLoggerClass()):
 
                         # ROT_TWO
                         ncode += chr(opmap['ROT_TWO'])
-                                            
+
                         # CALL_FUNCTION 2
                         ncode += chr(opmap['CALL_FUNCTION']) + generate_arg_str(2)
-                    else: 
+                    else:
                         nconst_offset = len(nconst)+1
                         ncode += chr(opmap['LOAD_CONST']) + generate_arg_str(nconst_offset)
 
                         # CALL_FUNCTION 1
                         ncode += chr(opmap['CALL_FUNCTION']) + generate_arg_str(1) # print newline
-                    ncode += chr(opmap['POP_TOP'])                    
+                    ncode += chr(opmap['POP_TOP'])
                     ncode_len2 = len(ncode)
 
                     nlnotab[(plnotab+1)*2] += ncode_len2-ncode_len1 +delta_adjust
-                
+
                 if i>=lnotab_deadline:
                     plnotab+=1
                     lnotab_base = lnotab_deadline
@@ -195,14 +204,14 @@ class MyLogger(logging.getLoggerClass()):
             nconst.append(self._smart_print_helper)
             nconst.append((default_level, f))
             nconst = tuple(nconst)
-            
+
 
             ncodeobj = types.CodeType(codeobj.co_argcount, codeobj.co_nlocals, codeobj.co_stacksize+4,
                                       codeobj.co_flags, ncode, nconst, codeobj.co_names,
                                       codeobj.co_varnames, codeobj.co_filename, codeobj.co_name,
                                       codeobj.co_firstlineno, "".join([chr(x) for x in nlnotab[:-2]]), codeobj.co_freevars,
                                       codeobj.co_cellvars)
-                                      
+
             nfunc = types.FunctionType(ncodeobj, f.func_globals, f.func_name,
                                        f.func_defaults, f.func_closure)
 
@@ -220,8 +229,8 @@ class MyLogger(logging.getLoggerClass()):
         Msg redirected here from print expression
         """
         func = level_and_func[1]
-        
-        frame = sys._getframe()
+
+        frame = inspect.currentframe()
         while True:
 #            print 'frame:',frame.f_code, func.func_code
             assert frame, "frame not found? bug!!!"
@@ -232,7 +241,7 @@ class MyLogger(logging.getLoggerClass()):
         if msg is None:
             msg_val = " ".join(self._print_cache)
             self._print_cache=[]
-            
+
             # make a type guess
             for name in logging._levelNames:
                 if type(name) is types.StringType:
@@ -249,6 +258,19 @@ class MyLogger(logging.getLoggerClass()):
             self._log(level, msg_val, {}, frame=frame)
         else:
             self._print_cache.append(msg)
+
+
+# Patching logging to support "tee_stdout"
+for name in ['critical', 'fatal', 'error', 'info', 'warning', 'warn']:
+    def wrap(funcname):
+        def wrap2(self, msg, *args, **kwargs):
+            if kwargs.get('tee_stdout'):
+                del kwargs['tee_stdout']
+                print msg
+            return getattr(super(MyLogger, self), funcname)(msg, *args, **kwargs)
+        return wrap2
+
+    setattr(MyLogger, name, wrap(name))
 
 logging.setLoggerClass(MyLogger)
 from logging import *
